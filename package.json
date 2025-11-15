@@ -1,6 +1,6 @@
 {
   "name": "@qastudio-dev/playwright",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "A Playwright test reporter that integrates with QAStudio.dev test management platform",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
