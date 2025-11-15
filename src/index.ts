@@ -270,6 +270,13 @@ export default class QAStudioReporter implements Reporter {
         });
 
         this.log('Test run completed successfully');
+
+        // Extract base URL from API URL (remove /api suffix)
+        const baseUrl = this.options.apiUrl.replace(/\/api\/?$/, '');
+        const testRunUrl = `${baseUrl}/projects/${this.options.projectId}/runs/${this.state.testRunId}`;
+
+        // Always output the URL (not just in verbose mode)
+        console.log(`\n[QAStudio.dev Reporter] View test run: ${testRunUrl}\n`);
       }
     } catch (error) {
       this.handleError('Failed to send test results', error);
