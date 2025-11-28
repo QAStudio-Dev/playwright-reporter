@@ -227,9 +227,7 @@ export function extractAttachments(result: TestResult): QAStudioAttachment[] {
 /**
  * Extract attachments as buffers for multipart upload
  */
-export function extractAttachmentsAsBuffers(
-  result: TestResult
-): Array<{
+export function extractAttachmentsAsBuffers(result: TestResult): Array<{
   name: string;
   contentType: string;
   data: Buffer;
