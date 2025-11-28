@@ -315,9 +315,8 @@ export default class QAStudioReporter implements Reporter {
       return;
     }
 
-    // Get batch to send and clear queue
+    // Get batch to send (but DON'T clear queue yet - only after success)
     const batch = [...this.resultQueue];
-    this.resultQueue = [];
 
     this.log(`Flushing batch of ${batch.length} results`);
 
@@ -333,6 +332,22 @@ export default class QAStudioReporter implements Reporter {
       .then(async (response) => {
         this.log(`Batch submitted successfully: ${response.processedCount} results processed`);
 
+        // Only remove successfully processed results from queue
+        // The API returns which results were processed (including duplicates)
+        if (response.results && response.results.length > 0) {
+          // Create a set of processed test titles for efficient lookup
+          const processedTitles = new Set(response.results.map((r) => r.title));
+
+          // Remove processed items from queue
+          this.resultQueue = this.resultQueue.filter(
+            (item) => !processedTitles.has(item.result.title)
+          );
+
+          this.log(
+            `Removed ${processedTitles.size} processed results from queue, ${this.resultQueue.length} remaining`
+          );
+        }
+
         if (response.errors && response.errors.length > 0) {
           this.log(`Batch had ${response.errors.length} errors:`);
           response.errors.forEach((err) => {
@@ -347,6 +362,8 @@ export default class QAStudioReporter implements Reporter {
       })
       .catch((error) => {
         this.handleError('Failed to send batch', error);
+        // Don't clear queue on failure - results will be retried in next flush
+        this.log(`Batch failed, ${this.resultQueue.length} results remain in queue for retry`);
       });
 
     // Track the promise so we can wait for it in onEnd
