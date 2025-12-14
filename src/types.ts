@@ -395,6 +395,15 @@ export interface PendingAttachment {
 }
 
 /**
+ * Upload failure tracking
+ */
+export interface UploadFailure {
+  testTitle: string;
+  error: string;
+  status: 'passed' | 'failed' | 'skipped';
+}
+
+/**
  * Reporter state
  */
 export interface ReporterState {

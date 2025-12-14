@@ -7,7 +7,12 @@ import type {
   FullResult,
 } from '@playwright/test/reporter';
 import { QAStudioAPIClient } from './api-client';
-import type { QAStudioReporterOptions, ReporterState, QAStudioTestResult } from './types';
+import type {
+  QAStudioReporterOptions,
+  ReporterState,
+  QAStudioTestResult,
+  UploadFailure,
+} from './types';
 import {
   convertTestResult,
   extractAttachmentsAsBuffers,
@@ -60,12 +65,12 @@ export default class QAStudioReporter implements Reporter {
   private passedTests = 0;
   private failedTests = 0;
   private skippedTests = 0;
-  private flushPromises: Promise<void>[] = [];
-  private uploadFailures: Array<{
+  private flushPromises: Array<{
+    promise: Promise<void>;
     testTitle: string;
-    error: string;
     status: 'passed' | 'failed' | 'skipped';
   }> = [];
+  private uploadFailures: UploadFailure[] = [];
 
   constructor(options: QAStudioReporterOptions) {
     // Validate options
@@ -212,33 +217,26 @@ export default class QAStudioReporter implements Reporter {
         // Remove attachments from result (will upload separately)
         delete qaResult.attachments;
 
+        // Determine test status for failure tracking
+        let testStatus: 'passed' | 'failed' | 'skipped';
+        if (result.status === 'passed') {
+          testStatus = 'passed';
+        } else if (result.status === 'failed' || result.status === 'timedOut') {
+          testStatus = 'failed';
+        } else {
+          // 'skipped' or 'interrupted'
+          testStatus = 'skipped';
+        }
+
         // Send result immediately (fire-and-forget, don't block test execution)
-        const sendPromise = this.sendTestResult(qaResult, filteredAttachments).catch(
-          (error: Error) => {
-            const errorMsg = error.message;
-            // Track which test status failed to upload
-            let failedStatus: 'passed' | 'failed' | 'skipped' = 'skipped';
-            if (result.status === 'passed') {
-              failedStatus = 'passed';
-            } else if (result.status === 'failed' || result.status === 'timedOut') {
-              failedStatus = 'failed';
-            }
+        const sendPromise = this.sendTestResult(qaResult, filteredAttachments);
 
-            this.uploadFailures.push({
-              testTitle: test.title,
-              error: errorMsg,
-              status: failedStatus,
-            });
-
-            // Log in verbose mode only to avoid duplicate error messages
-            if (this.options.verbose) {
-              this.log(`Failed to send result for ${test.title}:`, errorMsg);
-            }
-          }
-        );
-
-        // Track the promise so we can wait for it in onEnd
-        this.flushPromises.push(sendPromise);
+        // Track the promise with metadata so we can collect failures in onEnd
+        this.flushPromises.push({
+          promise: sendPromise,
+          testTitle: test.title,
+          status: testStatus,
+        });
       }
     }
 
@@ -280,21 +278,8 @@ export default class QAStudioReporter implements Reporter {
 
       // Complete the test run
       if (this.state.testRunId) {
-        // Calculate actual uploaded counts by subtracting failures
-        const failuresByStatus = this.uploadFailures.reduce(
-          (acc, failure) => {
-            acc[failure.status]++;
-            return acc;
-          },
-          { passed: 0, failed: 0, skipped: 0 }
-        );
-
-        const actualUploaded = {
-          total: this.totalTests - this.uploadFailures.length,
-          passed: this.passedTests - failuresByStatus.passed,
-          failed: this.failedTests - failuresByStatus.failed,
-          skipped: this.skippedTests - failuresByStatus.skipped,
-        };
+        // Calculate actual uploaded counts (excluding failures)
+        const actualUploaded = this.calculateUploadedCounts();
 
         await this.apiClient.completeTestRun({
           testRunId: this.state.testRunId,
@@ -332,7 +317,7 @@ export default class QAStudioReporter implements Reporter {
   }
 
   /**
-   * Wait for all pending result submissions to complete
+   * Wait for all pending result submissions to complete and collect failures
    */
   private async sendTestResults(): Promise<void> {
     if (!this.state.testRunId) {
@@ -343,7 +328,30 @@ export default class QAStudioReporter implements Reporter {
     // Wait for all pending submissions to complete
     if (this.flushPromises.length > 0) {
       this.log(`Waiting for ${this.flushPromises.length} pending result submissions...`);
-      await Promise.allSettled(this.flushPromises);
+
+      // Wait for all promises and collect failures
+      const results = await Promise.allSettled(this.flushPromises.map((item) => item.promise));
+
+      // Collect failures from rejected promises
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          const item = this.flushPromises[index];
+          const errorMsg =
+            result.reason instanceof Error ? result.reason.message : String(result.reason);
+
+          this.uploadFailures.push({
+            testTitle: item.testTitle,
+            error: errorMsg,
+            status: item.status,
+          });
+
+          // Log in verbose mode
+          if (this.options.verbose) {
+            this.log(`Failed to upload result for ${item.testTitle}:`, errorMsg);
+          }
+        }
+      });
+
       this.flushPromises = [];
     }
 
@@ -429,6 +437,33 @@ export default class QAStudioReporter implements Reporter {
 
     await Promise.allSettled(uploadPromises);
     this.log(`Finished uploading ${attachments.length} attachments`);
+  }
+
+  /**
+   * Calculate actual uploaded test counts by subtracting upload failures
+   */
+  private calculateUploadedCounts(): {
+    total: number;
+    passed: number;
+    failed: number;
+    skipped: number;
+  } {
+    // Count failures by status
+    const failuresByStatus = this.uploadFailures.reduce(
+      (acc, failure) => {
+        acc[failure.status]++;
+        return acc;
+      },
+      { passed: 0, failed: 0, skipped: 0 }
+    );
+
+    // Return actual uploaded counts
+    return {
+      total: this.totalTests - this.uploadFailures.length,
+      passed: this.passedTests - failuresByStatus.passed,
+      failed: this.failedTests - failuresByStatus.failed,
+      skipped: this.skippedTests - failuresByStatus.skipped,
+    };
   }
 
   /**
