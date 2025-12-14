@@ -71,6 +71,8 @@ export default class QAStudioReporter implements Reporter {
     status: 'passed' | 'failed' | 'skipped';
   }> = [];
   private uploadFailures: UploadFailure[] = [];
+  private testRunReadyPromise: Promise<void>;
+  private testRunReadyResolve!: () => void;
 
   constructor(options: QAStudioReporterOptions) {
     // Validate options
@@ -114,6 +116,11 @@ export default class QAStudioReporter implements Reporter {
       tests: new Map(),
     };
 
+    // Initialize promise that resolves when test run is ready
+    this.testRunReadyPromise = new Promise<void>((resolve) => {
+      this.testRunReadyResolve = resolve;
+    });
+
     this.log('QAStudio.dev Reporter initialized with options:', {
       ...this.options,
       apiKey: '***hidden***',
@@ -146,6 +153,10 @@ export default class QAStudioReporter implements Reporter {
       }
     } catch (error) {
       this.handleError('Failed to create test run', error);
+    } finally {
+      // Signal that test run is ready (or failed, but either way we're done)
+      this.testRunReadyResolve();
+      this.log('Test run ready signal sent');
     }
   }
 
@@ -182,6 +193,10 @@ export default class QAStudioReporter implements Reporter {
     // Update counters (only count final result, not retries)
     if (result.retry === test.retries) {
       this.totalTests++;
+      this.log(
+        `[onTestEnd] Final retry for test #${this.totalTests}: ${test.title} (retry ${result.retry}/${test.retries})`
+      );
+
       switch (result.status) {
         case 'passed':
           this.passedTests++;
@@ -196,46 +211,57 @@ export default class QAStudioReporter implements Reporter {
           break;
       }
 
-      // Stream results: send immediately (one at a time)
-      if (this.state.testRunId) {
-        const qaResult = convertTestResult(test, result, testData.startTime, this.options);
+      // Wait for test run to be ready before sending results
+      this.log(`[onTestEnd] Preparing to send test #${this.totalTests}: ${test.title}`);
+      const qaResult = convertTestResult(test, result, testData.startTime, this.options);
 
-        // Extract attachments separately for multipart upload
-        const attachmentBuffers = extractAttachmentsAsBuffers(result);
+      // Extract attachments separately for multipart upload
+      const attachmentBuffers = extractAttachmentsAsBuffers(result);
 
-        // Filter attachments based on options
-        const filteredAttachments = attachmentBuffers.filter((att) => {
-          if (att.type === 'screenshot' && !this.options.uploadScreenshots) {
-            return false;
+      // Filter attachments based on options
+      const filteredAttachments = attachmentBuffers.filter((att) => {
+        if (att.type === 'screenshot' && !this.options.uploadScreenshots) {
+          return false;
+        }
+        if (att.type === 'video' && !this.options.uploadVideos) {
+          return false;
+        }
+        return true;
+      });
+
+      // Remove attachments from result (will upload separately)
+      delete qaResult.attachments;
+
+      // Determine test status for failure tracking
+      const testStatus = this.normalizeTestStatus(result.status);
+
+      // Send result immediately (fire-and-forget, don't block test execution)
+      // Wait for test run to be ready, then send result
+      // Convert to a promise that always fulfills (never rejects) to avoid unhandled rejections
+      const sendPromise = this.testRunReadyPromise
+        .then(() => {
+          if (!this.state.testRunId) {
+            throw new Error('Test run was not created successfully');
           }
-          if (att.type === 'video' && !this.options.uploadVideos) {
-            return false;
-          }
-          return true;
-        });
+          return this.sendTestResult(qaResult, filteredAttachments);
+        })
+        .then(() => ({ success: true as const }))
+        .catch((error: unknown) => ({
+          success: false as const,
+          error: error instanceof Error ? error.message : String(error),
+        }));
 
-        // Remove attachments from result (will upload separately)
-        delete qaResult.attachments;
-
-        // Determine test status for failure tracking
-        const testStatus = this.normalizeTestStatus(result.status);
-
-        // Send result immediately (fire-and-forget, don't block test execution)
-        // Convert to a promise that always fulfills (never rejects) to avoid unhandled rejections
-        const sendPromise = this.sendTestResult(qaResult, filteredAttachments)
-          .then(() => ({ success: true as const }))
-          .catch((error: unknown) => ({
-            success: false as const,
-            error: error instanceof Error ? error.message : String(error),
-          }));
-
-        // Track the promise with metadata so we can collect failures in onEnd
-        this.flushPromises.push({
-          promise: sendPromise,
-          testTitle: test.title,
-          status: testStatus,
-        });
-      }
+      // Track the promise with metadata so we can collect failures in onEnd
+      this.flushPromises.push({
+        promise: sendPromise,
+        testTitle: test.title,
+        status: testStatus,
+      });
+      this.log(
+        `[onTestEnd] Promise tracked for test #${this.totalTests}: ${test.title} (total tracked: ${this.flushPromises.length})`
+      );
+    } else {
+      this.log(`[onTestEnd] Skipping retry ${result.retry}/${test.retries} for: ${test.title}`);
     }
 
     this.log(
