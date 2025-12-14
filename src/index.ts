@@ -61,6 +61,7 @@ export default class QAStudioReporter implements Reporter {
   private failedTests = 0;
   private skippedTests = 0;
   private flushPromises: Promise<void>[] = [];
+  private uploadFailures: Array<{ testTitle: string; error: string }> = [];
 
   constructor(options: QAStudioReporterOptions) {
     // Validate options
@@ -210,6 +211,11 @@ export default class QAStudioReporter implements Reporter {
         // Send result immediately (fire-and-forget, don't block test execution)
         const sendPromise = this.sendTestResult(qaResult, filteredAttachments).catch(
           (error: Error) => {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            this.uploadFailures.push({
+              testTitle: test.title,
+              error: errorMsg,
+            });
             this.handleError(`Failed to send result for ${test.title}`, error);
           }
         );
@@ -241,6 +247,20 @@ export default class QAStudioReporter implements Reporter {
       // Send test results to QAStudio.dev
       await this.sendTestResults();
 
+      // Report upload failures if any
+      if (this.uploadFailures.length > 0) {
+        console.error(
+          `\n[QAStudio.dev Reporter] ⚠️  WARNING: ${this.uploadFailures.length} test result(s) failed to upload:\n`
+        );
+        this.uploadFailures.forEach((failure) => {
+          console.error(`  ❌ ${failure.testTitle}`);
+          console.error(`     Error: ${failure.error}\n`);
+        });
+        console.error(
+          `[QAStudio.dev Reporter] Test run may be incomplete. Expected ${this.totalTests} tests, but ${this.uploadFailures.length} failed to upload.\n`
+        );
+      }
+
       // Complete the test run
       if (this.state.testRunId) {
         await this.apiClient.completeTestRun({
@@ -261,7 +281,17 @@ export default class QAStudioReporter implements Reporter {
         const testRunUrl = `${baseUrl}/projects/${this.options.projectId}/runs/${this.state.testRunId}`;
 
         // Always output the URL (not just in verbose mode)
-        console.log(`\n[QAStudio.dev Reporter] View test run: ${testRunUrl}\n`);
+        console.log(`\n[QAStudio.dev Reporter] View test run: ${testRunUrl}`);
+
+        if (this.uploadFailures.length > 0) {
+          console.log(
+            `[QAStudio.dev Reporter] ⚠️  ${this.totalTests - this.uploadFailures.length}/${this.totalTests} tests uploaded successfully\n`
+          );
+        } else {
+          console.log(
+            `[QAStudio.dev Reporter] ✅ All ${this.totalTests} tests uploaded successfully\n`
+          );
+        }
       }
     } catch (error) {
       this.handleError('Failed to send test results', error);
