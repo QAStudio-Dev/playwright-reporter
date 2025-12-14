@@ -12,6 +12,7 @@ import type {
   ReporterState,
   QAStudioTestResult,
   UploadFailure,
+  PendingUpload,
 } from './types';
 import {
   convertTestResult,
@@ -65,14 +66,11 @@ export default class QAStudioReporter implements Reporter {
   private passedTests = 0;
   private failedTests = 0;
   private skippedTests = 0;
-  private flushPromises: Array<{
-    promise: Promise<{ success: true } | { success: false; error: string }>;
-    testTitle: string;
-    status: 'passed' | 'failed' | 'skipped';
-  }> = [];
+  private flushPromises: PendingUpload[] = [];
   private uploadFailures: UploadFailure[] = [];
   private testRunReadyPromise: Promise<void>;
-  private testRunReadyResolve!: () => void;
+  private testRunReadyResolve: (() => void) | null = null;
+  private testRunCreationError: Error | null = null;
 
   constructor(options: QAStudioReporterOptions) {
     // Validate options
@@ -121,6 +119,10 @@ export default class QAStudioReporter implements Reporter {
       this.testRunReadyResolve = resolve;
     });
 
+    if (!this.testRunReadyResolve) {
+      throw new Error('Failed to initialize test run ready promise');
+    }
+
     this.log('QAStudio.dev Reporter initialized with options:', {
       ...this.options,
       apiKey: '***hidden***',
@@ -152,10 +154,12 @@ export default class QAStudioReporter implements Reporter {
         this.log(`Using existing test run ID: ${this.state.testRunId}`);
       }
     } catch (error) {
+      // Store the error for later propagation
+      this.testRunCreationError = error instanceof Error ? error : new Error(String(error));
       this.handleError('Failed to create test run', error);
     } finally {
       // Signal that test run is ready (or failed, but either way we're done)
-      this.testRunReadyResolve();
+      this.testRunReadyResolve?.();
       this.log('Test run ready signal sent');
     }
   }
@@ -241,6 +245,10 @@ export default class QAStudioReporter implements Reporter {
       const sendPromise = this.testRunReadyPromise
         .then(() => {
           if (!this.state.testRunId) {
+            // Provide detailed error with root cause if available
+            if (this.testRunCreationError) {
+              throw new Error(`Test run creation failed: ${this.testRunCreationError.message}`);
+            }
             throw new Error('Test run was not created successfully');
           }
           return this.sendTestResult(qaResult, filteredAttachments);
@@ -288,14 +296,14 @@ export default class QAStudioReporter implements Reporter {
 
       // Report upload failures if any
       if (this.uploadFailures.length > 0) {
-        console.error(
+        console.warn(
           `\n[QAStudio.dev Reporter] WARNING: ${this.uploadFailures.length} test result(s) failed to upload:\n`
         );
         this.uploadFailures.forEach((failure) => {
-          console.error(`  - ${failure.testTitle}`);
-          console.error(`    Error: ${failure.error}\n`);
+          console.warn(`  - ${failure.testTitle}`);
+          console.warn(`    Error: ${failure.error}\n`);
         });
-        console.error(
+        console.warn(
           `[QAStudio.dev Reporter] Test run may be incomplete. Expected ${this.totalTests} tests, but ${this.uploadFailures.length} failed to upload.\n`
         );
       }

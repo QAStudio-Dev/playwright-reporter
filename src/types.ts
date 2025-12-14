@@ -404,6 +404,15 @@ export interface UploadFailure {
 }
 
 /**
+ * Pending test result upload with metadata
+ */
+export interface PendingUpload {
+  promise: Promise<{ success: true } | { success: false; error: string }>;
+  testTitle: string;
+  status: 'passed' | 'failed' | 'skipped';
+}
+
+/**
  * Reporter state
  */
 export interface ReporterState {
