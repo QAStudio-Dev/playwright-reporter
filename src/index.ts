@@ -61,7 +61,11 @@ export default class QAStudioReporter implements Reporter {
   private failedTests = 0;
   private skippedTests = 0;
   private flushPromises: Promise<void>[] = [];
-  private uploadFailures: Array<{ testTitle: string; error: string }> = [];
+  private uploadFailures: Array<{
+    testTitle: string;
+    error: string;
+    status: 'passed' | 'failed' | 'skipped';
+  }> = [];
 
   constructor(options: QAStudioReporterOptions) {
     // Validate options
@@ -211,12 +215,25 @@ export default class QAStudioReporter implements Reporter {
         // Send result immediately (fire-and-forget, don't block test execution)
         const sendPromise = this.sendTestResult(qaResult, filteredAttachments).catch(
           (error: Error) => {
-            const errorMsg = error instanceof Error ? error.message : String(error);
+            const errorMsg = error.message;
+            // Track which test status failed to upload
+            let failedStatus: 'passed' | 'failed' | 'skipped' = 'skipped';
+            if (result.status === 'passed') {
+              failedStatus = 'passed';
+            } else if (result.status === 'failed' || result.status === 'timedOut') {
+              failedStatus = 'failed';
+            }
+
             this.uploadFailures.push({
               testTitle: test.title,
               error: errorMsg,
+              status: failedStatus,
             });
-            this.handleError(`Failed to send result for ${test.title}`, error);
+
+            // Log in verbose mode only to avoid duplicate error messages
+            if (this.options.verbose) {
+              this.log(`Failed to send result for ${test.title}:`, errorMsg);
+            }
           }
         );
 
@@ -263,13 +280,29 @@ export default class QAStudioReporter implements Reporter {
 
       // Complete the test run
       if (this.state.testRunId) {
+        // Calculate actual uploaded counts by subtracting failures
+        const failuresByStatus = this.uploadFailures.reduce(
+          (acc, failure) => {
+            acc[failure.status]++;
+            return acc;
+          },
+          { passed: 0, failed: 0, skipped: 0 }
+        );
+
+        const actualUploaded = {
+          total: this.totalTests - this.uploadFailures.length,
+          passed: this.passedTests - failuresByStatus.passed,
+          failed: this.failedTests - failuresByStatus.failed,
+          skipped: this.skippedTests - failuresByStatus.skipped,
+        };
+
         await this.apiClient.completeTestRun({
           testRunId: this.state.testRunId,
           summary: {
-            total: this.totalTests,
-            passed: this.passedTests,
-            failed: this.failedTests,
-            skipped: this.skippedTests,
+            total: actualUploaded.total,
+            passed: actualUploaded.passed,
+            failed: actualUploaded.failed,
+            skipped: actualUploaded.skipped,
             duration,
           },
         });
