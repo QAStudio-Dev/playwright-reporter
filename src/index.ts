@@ -66,7 +66,7 @@ export default class QAStudioReporter implements Reporter {
   private failedTests = 0;
   private skippedTests = 0;
   private flushPromises: Array<{
-    promise: Promise<void>;
+    promise: Promise<{ success: true } | { success: false; error: string }>;
     testTitle: string;
     status: 'passed' | 'failed' | 'skipped';
   }> = [];
@@ -218,18 +218,16 @@ export default class QAStudioReporter implements Reporter {
         delete qaResult.attachments;
 
         // Determine test status for failure tracking
-        let testStatus: 'passed' | 'failed' | 'skipped';
-        if (result.status === 'passed') {
-          testStatus = 'passed';
-        } else if (result.status === 'failed' || result.status === 'timedOut') {
-          testStatus = 'failed';
-        } else {
-          // 'skipped' or 'interrupted'
-          testStatus = 'skipped';
-        }
+        const testStatus = this.normalizeTestStatus(result.status);
 
         // Send result immediately (fire-and-forget, don't block test execution)
-        const sendPromise = this.sendTestResult(qaResult, filteredAttachments);
+        // Convert to a promise that always fulfills (never rejects) to avoid unhandled rejections
+        const sendPromise = this.sendTestResult(qaResult, filteredAttachments)
+          .then(() => ({ success: true as const }))
+          .catch((error: unknown) => ({
+            success: false as const,
+            error: error instanceof Error ? error.message : String(error),
+          }));
 
         // Track the promise with metadata so we can collect failures in onEnd
         this.flushPromises.push({
@@ -265,11 +263,11 @@ export default class QAStudioReporter implements Reporter {
       // Report upload failures if any
       if (this.uploadFailures.length > 0) {
         console.error(
-          `\n[QAStudio.dev Reporter] ⚠️  WARNING: ${this.uploadFailures.length} test result(s) failed to upload:\n`
+          `\n[QAStudio.dev Reporter] WARNING: ${this.uploadFailures.length} test result(s) failed to upload:\n`
         );
         this.uploadFailures.forEach((failure) => {
-          console.error(`  ❌ ${failure.testTitle}`);
-          console.error(`     Error: ${failure.error}\n`);
+          console.error(`  - ${failure.testTitle}`);
+          console.error(`    Error: ${failure.error}\n`);
         });
         console.error(
           `[QAStudio.dev Reporter] Test run may be incomplete. Expected ${this.totalTests} tests, but ${this.uploadFailures.length} failed to upload.\n`
@@ -303,11 +301,11 @@ export default class QAStudioReporter implements Reporter {
 
         if (this.uploadFailures.length > 0) {
           console.log(
-            `[QAStudio.dev Reporter] ⚠️  ${this.totalTests - this.uploadFailures.length}/${this.totalTests} tests uploaded successfully\n`
+            `[QAStudio.dev Reporter] ${this.totalTests - this.uploadFailures.length}/${this.totalTests} tests uploaded successfully\n`
           );
         } else {
           console.log(
-            `[QAStudio.dev Reporter] ✅ All ${this.totalTests} tests uploaded successfully\n`
+            `[QAStudio.dev Reporter] All ${this.totalTests} tests uploaded successfully\n`
           );
         }
       }
@@ -329,25 +327,23 @@ export default class QAStudioReporter implements Reporter {
     if (this.flushPromises.length > 0) {
       this.log(`Waiting for ${this.flushPromises.length} pending result submissions...`);
 
-      // Wait for all promises and collect failures
-      const results = await Promise.allSettled(this.flushPromises.map((item) => item.promise));
+      // Wait for all promises (all will fulfill, none will reject)
+      const results = await Promise.all(this.flushPromises.map((item) => item.promise));
 
-      // Collect failures from rejected promises
+      // Collect failures from unsuccessful results
       results.forEach((result, index) => {
-        if (result.status === 'rejected') {
+        if (!result.success) {
           const item = this.flushPromises[index];
-          const errorMsg =
-            result.reason instanceof Error ? result.reason.message : String(result.reason);
 
           this.uploadFailures.push({
             testTitle: item.testTitle,
-            error: errorMsg,
+            error: result.error,
             status: item.status,
           });
 
           // Log in verbose mode
           if (this.options.verbose) {
-            this.log(`Failed to upload result for ${item.testTitle}:`, errorMsg);
+            this.log(`Failed to upload result for ${item.testTitle}:`, result.error);
           }
         }
       });
@@ -437,6 +433,20 @@ export default class QAStudioReporter implements Reporter {
 
     await Promise.allSettled(uploadPromises);
     this.log(`Finished uploading ${attachments.length} attachments`);
+  }
+
+  /**
+   * Normalize Playwright test status to one of three categories for reporting
+   */
+  private normalizeTestStatus(status: TestResult['status']): 'passed' | 'failed' | 'skipped' {
+    if (status === 'passed') {
+      return 'passed';
+    }
+    if (status === 'failed' || status === 'timedOut') {
+      return 'failed';
+    }
+    // 'skipped' or 'interrupted'
+    return 'skipped';
   }
 
   /**
