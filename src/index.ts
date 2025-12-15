@@ -372,25 +372,8 @@ export default class QAStudioReporter implements Reporter {
    * Wait for all pending result submissions to complete and collect failures
    */
   private async sendTestResults(): Promise<void> {
-    if (!this.state.testRunId) {
-      console.warn(
-        '[QAStudio.dev Reporter] WARNING: No test run ID available, results not submitted'
-      );
-      this.log('No test run ID available, skipping result submission');
-
-      // Track all pending uploads as failures since they can't be submitted
-      this.flushPromises.forEach((item) => {
-        this.uploadFailures.push({
-          testTitle: item.testTitle,
-          error: 'Test run was not created successfully',
-          status: item.status,
-        });
-      });
-
-      return;
-    }
-
-    // Wait for all pending submissions to complete
+    // Wait for all pending submissions to complete (even if no test run ID)
+    // The promises themselves will fail appropriately if test run creation failed
     if (this.flushPromises.length > 0) {
       const totalPending = this.flushPromises.length;
       this.log(`Waiting for ${totalPending} pending result submissions...`);
