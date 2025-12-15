@@ -119,10 +119,6 @@ export default class QAStudioReporter implements Reporter {
       this.testRunReadyResolve = resolve;
     });
 
-    if (!this.testRunReadyResolve) {
-      throw new Error('Failed to initialize test run ready promise');
-    }
-
     this.log('QAStudio.dev Reporter initialized with options:', {
       ...this.options,
       apiKey: '***hidden***',
@@ -236,9 +232,6 @@ export default class QAStudioReporter implements Reporter {
       // Remove attachments from result (will upload separately)
       delete qaResult.attachments;
 
-      // Determine test status for failure tracking
-      const testStatus = this.normalizeTestStatus(result.status);
-
       // Send result immediately (fire-and-forget, don't block test execution)
       // Wait for test run to be ready, then send result
       // Convert to a promise that always fulfills (never rejects) to avoid unhandled rejections
@@ -263,7 +256,6 @@ export default class QAStudioReporter implements Reporter {
       this.flushPromises.push({
         promise: sendPromise,
         testTitle: test.title,
-        status: testStatus,
       });
       this.log(
         `[onTestEnd] Promise tracked for test #${this.totalTests}: ${test.title} (total tracked: ${this.flushPromises.length})`
@@ -296,16 +288,37 @@ export default class QAStudioReporter implements Reporter {
 
       // Report upload failures if any
       if (this.uploadFailures.length > 0) {
-        console.warn(
-          `\n[QAStudio.dev Reporter] WARNING: ${this.uploadFailures.length} test result(s) failed to upload:\n`
-        );
-        this.uploadFailures.forEach((failure) => {
-          console.warn(`  - ${failure.testTitle}`);
-          console.warn(`    Error: ${failure.error}\n`);
-        });
-        console.warn(
-          `[QAStudio.dev Reporter] Test run may be incomplete. Expected ${this.totalTests} tests, but ${this.uploadFailures.length} failed to upload.\n`
-        );
+        // Check if all failures are due to test run creation failure
+        const testRunCreationFailureMsg = this.testRunCreationError
+          ? `Test run creation failed: ${this.testRunCreationError.message}`
+          : null;
+
+        const allFailuresDueToTestRunCreation =
+          testRunCreationFailureMsg &&
+          this.uploadFailures.every((f) => f.error === testRunCreationFailureMsg);
+
+        if (allFailuresDueToTestRunCreation) {
+          // Deduplicated message for test run creation failure
+          console.warn(
+            `\n[QAStudio.dev Reporter] WARNING: Test run creation failed, no results were uploaded.\n`
+          );
+          console.warn(`  Error: ${this.testRunCreationError!.message}\n`);
+          console.warn(
+            `[QAStudio.dev Reporter] ${this.totalTests} test(s) ran locally but could not be uploaded.\n`
+          );
+        } else {
+          // Individual failure messages
+          console.warn(
+            `\n[QAStudio.dev Reporter] WARNING: ${this.uploadFailures.length} test result(s) failed to upload:\n`
+          );
+          this.uploadFailures.forEach((failure) => {
+            console.warn(`  - ${failure.testTitle}`);
+            console.warn(`    Error: ${failure.error}\n`);
+          });
+          console.warn(
+            `[QAStudio.dev Reporter] Test run may be incomplete. Expected ${this.totalTests} tests, but ${this.uploadFailures.length} failed to upload.\n`
+          );
+        }
       }
 
       // Complete the test run
@@ -359,7 +372,8 @@ export default class QAStudioReporter implements Reporter {
 
     // Wait for all pending submissions to complete
     if (this.flushPromises.length > 0) {
-      this.log(`Waiting for ${this.flushPromises.length} pending result submissions...`);
+      const totalPending = this.flushPromises.length;
+      this.log(`Waiting for ${totalPending} pending result submissions...`);
 
       // Wait for all promises (all will fulfill, none will reject)
       const results = await Promise.all(this.flushPromises.map((item) => item.promise));
@@ -372,7 +386,6 @@ export default class QAStudioReporter implements Reporter {
           this.uploadFailures.push({
             testTitle: item.testTitle,
             error: result.error,
-            status: item.status,
           });
 
           // Log in verbose mode
@@ -382,10 +395,13 @@ export default class QAStudioReporter implements Reporter {
         }
       });
 
+      const successCount = totalPending - this.uploadFailures.length;
+      this.log(
+        `Test result processing complete: ${successCount}/${totalPending} uploaded successfully`
+      );
+
       this.flushPromises = [];
     }
-
-    this.log('All test results sent successfully');
   }
 
   /**
@@ -470,21 +486,12 @@ export default class QAStudioReporter implements Reporter {
   }
 
   /**
-   * Normalize Playwright test status to one of three categories for reporting
-   */
-  private normalizeTestStatus(status: TestResult['status']): 'passed' | 'failed' | 'skipped' {
-    if (status === 'passed') {
-      return 'passed';
-    }
-    if (status === 'failed' || status === 'timedOut') {
-      return 'failed';
-    }
-    // 'skipped' or 'interrupted'
-    return 'skipped';
-  }
-
-  /**
    * Calculate actual uploaded test counts by subtracting upload failures
+   *
+   * Note: We report the total number of successfully uploaded tests.
+   * The status breakdown (passed/failed/skipped) reflects the test execution results,
+   * not upload success. If some tests fail to upload, the total will be less than
+   * the sum of passed + failed + skipped.
    */
   private calculateUploadedCounts(): {
     total: number;
@@ -492,21 +499,12 @@ export default class QAStudioReporter implements Reporter {
     failed: number;
     skipped: number;
   } {
-    // Count failures by status
-    const failuresByStatus = this.uploadFailures.reduce(
-      (acc, failure) => {
-        acc[failure.status]++;
-        return acc;
-      },
-      { passed: 0, failed: 0, skipped: 0 }
-    );
-
-    // Return actual uploaded counts
+    // Return counts: total reflects successful uploads, status breakdown reflects execution
     return {
       total: this.totalTests - this.uploadFailures.length,
-      passed: this.passedTests - failuresByStatus.passed,
-      failed: this.failedTests - failuresByStatus.failed,
-      skipped: this.skippedTests - failuresByStatus.skipped,
+      passed: this.passedTests,
+      failed: this.failedTests,
+      skipped: this.skippedTests,
     };
   }
 
