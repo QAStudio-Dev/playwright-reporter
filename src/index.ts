@@ -255,10 +255,17 @@ export default class QAStudioReporter implements Reporter {
           return this.sendTestResult(qaResult, filteredAttachments);
         })
         .then(() => ({ success: true as const }))
-        .catch((error: unknown) => ({
-          success: false as const,
-          error: error instanceof Error ? error.message : String(error),
-        }));
+        .catch((error: unknown) => {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          // Log upload failure in verbose mode for debugging
+          if (this.options.verbose) {
+            this.log(`Upload failed for ${test.title}: ${errorMessage}`);
+          }
+          return {
+            success: false as const,
+            error: errorMessage,
+          };
+        });
 
       // Track the promise with metadata so we can collect failures in onEnd
       this.flushPromises.push({
