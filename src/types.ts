@@ -400,6 +400,7 @@ export interface PendingAttachment {
 export interface UploadFailure {
   testTitle: string;
   error: string;
+  status: 'passed' | 'failed' | 'skipped';
 }
 
 /**
@@ -408,6 +409,7 @@ export interface UploadFailure {
 export interface PendingUpload {
   promise: Promise<{ success: true } | { success: false; error: string }>;
   testTitle: string;
+  status: 'passed' | 'failed' | 'skipped';
 }
 
 /**

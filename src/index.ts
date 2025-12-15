@@ -72,6 +72,9 @@ export default class QAStudioReporter implements Reporter {
   private testRunReadyResolve: (() => void) | null = null;
   private testRunCreationError: Error | null = null;
 
+  // Constants
+  private readonly TEST_RUN_CREATION_ERROR_PREFIX = 'Test run creation failed:';
+
   constructor(options: QAStudioReporterOptions) {
     // Validate options
     validateOptions(options);
@@ -232,6 +235,9 @@ export default class QAStudioReporter implements Reporter {
       // Remove attachments from result (will upload separately)
       delete qaResult.attachments;
 
+      // Normalize test status for failure tracking
+      const testStatus = this.normalizeTestStatus(result.status);
+
       // Send result immediately (fire-and-forget, don't block test execution)
       // Wait for test run to be ready, then send result
       // Convert to a promise that always fulfills (never rejects) to avoid unhandled rejections
@@ -240,7 +246,9 @@ export default class QAStudioReporter implements Reporter {
           if (!this.state.testRunId) {
             // Provide detailed error with root cause if available
             if (this.testRunCreationError) {
-              throw new Error(`Test run creation failed: ${this.testRunCreationError.message}`);
+              throw new Error(
+                `${this.TEST_RUN_CREATION_ERROR_PREFIX} ${this.testRunCreationError.message}`
+              );
             }
             throw new Error('Test run was not created successfully');
           }
@@ -256,6 +264,7 @@ export default class QAStudioReporter implements Reporter {
       this.flushPromises.push({
         promise: sendPromise,
         testTitle: test.title,
+        status: testStatus,
       });
       this.log(
         `[onTestEnd] Promise tracked for test #${this.totalTests}: ${test.title} (total tracked: ${this.flushPromises.length})`
@@ -290,7 +299,7 @@ export default class QAStudioReporter implements Reporter {
       if (this.uploadFailures.length > 0) {
         // Check if all failures are due to test run creation failure
         const testRunCreationFailureMsg = this.testRunCreationError
-          ? `Test run creation failed: ${this.testRunCreationError.message}`
+          ? `${this.TEST_RUN_CREATION_ERROR_PREFIX} ${this.testRunCreationError.message}`
           : null;
 
         const allFailuresDueToTestRunCreation =
@@ -366,6 +375,9 @@ export default class QAStudioReporter implements Reporter {
    */
   private async sendTestResults(): Promise<void> {
     if (!this.state.testRunId) {
+      console.warn(
+        '[QAStudio.dev Reporter] WARNING: No test run ID available, results not submitted'
+      );
       this.log('No test run ID available, skipping result submission');
       return;
     }
@@ -386,6 +398,7 @@ export default class QAStudioReporter implements Reporter {
           this.uploadFailures.push({
             testTitle: item.testTitle,
             error: result.error,
+            status: item.status,
           });
 
           // Log in verbose mode
@@ -486,12 +499,25 @@ export default class QAStudioReporter implements Reporter {
   }
 
   /**
+   * Normalize Playwright test status to one of three categories for reporting
+   */
+  private normalizeTestStatus(status: TestResult['status']): 'passed' | 'failed' | 'skipped' {
+    if (status === 'passed') {
+      return 'passed';
+    }
+    if (status === 'failed' || status === 'timedOut') {
+      return 'failed';
+    }
+    // 'skipped' or 'interrupted'
+    return 'skipped';
+  }
+
+  /**
    * Calculate actual uploaded test counts by subtracting upload failures
    *
-   * Note: We report the total number of successfully uploaded tests.
-   * The status breakdown (passed/failed/skipped) reflects the test execution results,
-   * not upload success. If some tests fail to upload, the total will be less than
-   * the sum of passed + failed + skipped.
+   * This ensures that the summary sent to the API accurately reflects only the tests
+   * that were successfully uploaded. Each status counter is reduced by the number of
+   * failed uploads for that status, ensuring total = passed + failed + skipped.
    */
   private calculateUploadedCounts(): {
     total: number;
@@ -499,12 +525,21 @@ export default class QAStudioReporter implements Reporter {
     failed: number;
     skipped: number;
   } {
-    // Return counts: total reflects successful uploads, status breakdown reflects execution
+    // Count failures by status
+    const failuresByStatus = this.uploadFailures.reduce(
+      (acc, failure) => {
+        acc[failure.status]++;
+        return acc;
+      },
+      { passed: 0, failed: 0, skipped: 0 }
+    );
+
+    // Subtract failures from each status counter
     return {
       total: this.totalTests - this.uploadFailures.length,
-      passed: this.passedTests,
-      failed: this.failedTests,
-      skipped: this.skippedTests,
+      passed: this.passedTests - failuresByStatus.passed,
+      failed: this.failedTests - failuresByStatus.failed,
+      skipped: this.skippedTests - failuresByStatus.skipped,
     };
   }
 
