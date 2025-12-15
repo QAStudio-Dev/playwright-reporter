@@ -111,16 +111,17 @@ export default class QAStudioReporter implements Reporter {
       testRunName: sanitizedOptions.testRunName ?? generateTestRunName(),
     };
 
+    // Initialize promise that resolves when test run is ready
+    // IMPORTANT: This must be done before creating apiClient to prevent race conditions
+    this.testRunReadyPromise = new Promise<void>((resolve) => {
+      this.testRunReadyResolve = resolve;
+    });
+
     this.apiClient = new QAStudioAPIClient(this.options);
 
     this.state = {
       tests: new Map(),
     };
-
-    // Initialize promise that resolves when test run is ready
-    this.testRunReadyPromise = new Promise<void>((resolve) => {
-      this.testRunReadyResolve = resolve;
-    });
 
     this.log('QAStudio.dev Reporter initialized with options:', {
       ...this.options,
@@ -245,10 +246,9 @@ export default class QAStudioReporter implements Reporter {
         .then(() => {
           if (!this.state.testRunId) {
             // Provide detailed error with root cause if available
-            if (this.testRunCreationError) {
-              throw new Error(
-                `${this.TEST_RUN_CREATION_ERROR_PREFIX} ${this.testRunCreationError.message}`
-              );
+            const errorMessage = this.getTestRunCreationErrorMessage();
+            if (errorMessage) {
+              throw new Error(errorMessage);
             }
             throw new Error('Test run was not created successfully');
           }
@@ -298,9 +298,7 @@ export default class QAStudioReporter implements Reporter {
       // Report upload failures if any
       if (this.uploadFailures.length > 0) {
         // Check if all failures are due to test run creation failure
-        const testRunCreationFailureMsg = this.testRunCreationError
-          ? `${this.TEST_RUN_CREATION_ERROR_PREFIX} ${this.testRunCreationError.message}`
-          : null;
+        const testRunCreationFailureMsg = this.getTestRunCreationErrorMessage();
 
         const allFailuresDueToTestRunCreation =
           testRunCreationFailureMsg &&
@@ -379,6 +377,16 @@ export default class QAStudioReporter implements Reporter {
         '[QAStudio.dev Reporter] WARNING: No test run ID available, results not submitted'
       );
       this.log('No test run ID available, skipping result submission');
+
+      // Track all pending uploads as failures since they can't be submitted
+      this.flushPromises.forEach((item) => {
+        this.uploadFailures.push({
+          testTitle: item.testTitle,
+          error: 'Test run was not created successfully',
+          status: item.status,
+        });
+      });
+
       return;
     }
 
@@ -496,6 +504,15 @@ export default class QAStudioReporter implements Reporter {
 
     await Promise.allSettled(uploadPromises);
     this.log(`Finished uploading ${attachments.length} attachments`);
+  }
+
+  /**
+   * Get formatted test run creation error message, or null if no error
+   */
+  private getTestRunCreationErrorMessage(): string | null {
+    return this.testRunCreationError
+      ? `${this.TEST_RUN_CREATION_ERROR_PREFIX} ${this.testRunCreationError.message}`
+      : null;
   }
 
   /**
