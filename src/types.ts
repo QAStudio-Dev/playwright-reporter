@@ -395,6 +395,29 @@ export interface PendingAttachment {
 }
 
 /**
+ * Result of a test upload attempt
+ */
+export type UploadResult = { success: true } | { success: false; error: string };
+
+/**
+ * Upload failure tracking
+ */
+export interface UploadFailure {
+  testTitle: string;
+  error: string;
+  status: 'passed' | 'failed' | 'skipped';
+}
+
+/**
+ * Pending test result upload with metadata
+ */
+export interface PendingUpload {
+  promise: Promise<UploadResult>;
+  testTitle: string;
+  status: 'passed' | 'failed' | 'skipped';
+}
+
+/**
  * Reporter state
  */
 export interface ReporterState {

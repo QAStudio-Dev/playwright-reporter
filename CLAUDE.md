@@ -56,6 +56,7 @@ The package consists of four main modules in `src/`:
    - API request/response types for all endpoints
    - Internal state management types (`ReporterState`, `InternalTestData`)
    - Test result and attachment types for data mapping
+   - Error handling types (`UploadResult`, `UploadFailure`, `PendingUpload`)
 
 4. **`utils.ts`** - Helper functions
    - `convertTestResult()` - Maps Playwright `TestResult` to QAStudio.dev format (includes error context)
@@ -87,6 +88,54 @@ The package consists of four main modules in `src/`:
 - **Test Linking**: Two methods to link tests to QAStudio.dev cases:
   1. Annotation: `test.info().annotations.push({ type: 'testCaseId', description: 'QA-123' })`
   2. Title prefix: `test('[QA-123] test name', ...)`
+
+### Error Handling & Upload Tracking
+
+The reporter implements robust error handling with accurate failure tracking:
+
+**Promise-based Synchronization**:
+
+- `testRunReadyPromise` ensures all test uploads wait for test run creation
+- Initialized in constructor before `apiClient` to prevent race conditions
+- Resolves when test run is created or fails (in finally block)
+
+**Fire-and-Forget Upload Pattern**:
+
+- In `onTestEnd`, each test result is uploaded asynchronously without blocking test execution
+- All upload promises are converted to fulfilled state (never reject) using `.then()/.catch()`
+- Promises return discriminated union: `{ success: true } | { success: false; error: string }`
+- Each promise is tracked in `flushPromises` array with metadata: `{ promise, testTitle, status }`
+
+**Failure Tracking**:
+
+- All upload promises are awaited in `onEnd` via `Promise.all()`
+- Failed uploads are collected into `uploadFailures` array with: `{ testTitle, error, status }`
+- Status is normalized to `'passed' | 'failed' | 'skipped'` at upload time (not result time)
+- This ensures accurate count calculation even when upload status differs from test status
+
+**Accurate Count Calculation**:
+
+- `calculateUploadedCounts()` subtracts upload failures by status category
+- Ensures mathematical correctness: `total = passed + failed + skipped`
+- Example: If a passed test fails to upload, both `total` and `passed` are decremented by 1
+
+**Error Deduplication**:
+
+- Detects when all upload failures share the same root cause (test run creation failure)
+- Shows single clear error message instead of N duplicate messages
+- Uses `getTestRunCreationErrorMessage()` helper with constant prefix for consistency
+
+**Verbose Logging**:
+
+- Upload failures are logged immediately in verbose mode (in catch block)
+- Also logged during failure collection in `sendTestResults()`
+- Helps debugging without cluttering console in production
+
+**Type Safety**:
+
+- `UploadResult` type extracted for clearer discriminated union handling
+- `UploadFailure` and `PendingUpload` interfaces track status for accurate counting
+- All error handling uses proper TypeScript typing
 
 ## TypeScript Configuration
 
