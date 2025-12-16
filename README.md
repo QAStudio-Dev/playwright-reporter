@@ -3,7 +3,7 @@
 [![npm version](https://badge.fury.io/js/@qastudio%2Fplaywright.svg)](https://www.npmjs.com/package/@qastudio-dev/playwright)
 [![CI](https://github.com/QAStudio-Dev/playwright/actions/workflows/test.yml/badge.svg)](https://github.com/QAStudio-Dev/playwright/actions/workflows/test.yml)
 [![Publish](https://github.com/QAStudio-Dev/playwright/actions/workflows/publish.yml/badge.svg)](https://github.com/QAStudio-Dev/playwright/actions/workflows/publish.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 A comprehensive Playwright test reporter that automatically sends test results to the QAStudio.dev test management platform.
 
@@ -434,7 +434,14 @@ npm test
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) - see the [LICENSE](LICENSE) file for details.
+
+### What does this mean?
+
+- You are free to use, modify, and distribute this software
+- If you modify this software and run it on a server accessible over a network, you must make your modified source code available to users
+- Any modifications must also be licensed under AGPL-3.0
+- See the [GNU AGPL FAQ](https://www.gnu.org/licenses/gpl-faq.html#WhatDoesGPLStandFor) for more information
 
 ## Support
 

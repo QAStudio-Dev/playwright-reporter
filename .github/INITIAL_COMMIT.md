@@ -20,7 +20,7 @@ This document verifies that all files are ready for the initial commit to the re
 ## ✅ Documentation
 
 - [x] `README.md` - Main documentation with badges
-- [x] `LICENSE` - MIT License
+- [x] `LICENSE` - AGPL-3.0 License
 - [x] `CHANGELOG.md` - Version history
 - [x] `CLAUDE.md` - Claude Code guidance
 - [x] `CONTRIBUTING.md` - Contribution guidelines

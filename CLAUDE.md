@@ -213,7 +213,7 @@ npm publish --access public
 npm publish
 ```
 
-The package must be public since it's a free/open-source integration.
+The package must be public since it's licensed under AGPL-3.0 (free/open-source).
 
 ## Testing Locally
 

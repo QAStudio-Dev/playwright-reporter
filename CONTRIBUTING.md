@@ -152,7 +152,15 @@ For questions about usage, please:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+All contributions must comply with the AGPL-3.0 license terms. This means:
+
+- Your code will be freely available for others to use and modify
+- Any modifications to this software used on a network server must have their source code made available
+- Derivative works must also be licensed under AGPL-3.0
+
+See the [LICENSE](LICENSE) file for the full license text.
 
 ## Code of Conduct
 
