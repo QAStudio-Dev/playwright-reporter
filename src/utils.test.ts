@@ -7,7 +7,9 @@ import {
   batchArray,
   formatDuration,
   generateTestRunName,
+  convertTestResult,
 } from './utils';
+import type { TestCase, TestResult, Suite } from '@playwright/test/reporter';
 
 describe('stripAnsi', () => {
   it('should return undefined for undefined input', () => {
@@ -245,5 +247,86 @@ describe('generateTestRunName', () => {
     // Names should have same format but might differ in time
     expect(name1).toMatch(/^Playwright Test Run -/);
     expect(name2).toMatch(/^Playwright Test Run -/);
+  });
+});
+
+function makeTest(title = 'logs in'): TestCase {
+  const project = { name: 'chromium' };
+  const suite = {
+    title: 'auth',
+    parent: {
+      title: '',
+      parent: undefined,
+      project: () => project,
+    },
+    project: () => project,
+  } as unknown as Suite;
+
+  return {
+    title,
+    annotations: [],
+    retries: 0,
+    parent: suite,
+    location: { file: 'auth.spec.ts', line: 10, column: 1 },
+    titlePath: () => ['auth', title],
+  } as unknown as TestCase;
+}
+
+function makeResult(status: TestResult['status'], steps = true): TestResult {
+  return {
+    status,
+    duration: 42,
+    retry: 0,
+    startTime: new Date(),
+    attachments: [],
+    stdout: [],
+    stderr: [],
+    steps: steps
+      ? [
+          {
+            title: 'goto',
+            category: 'pw:api',
+            startTime: new Date(),
+            duration: 10,
+            steps: [],
+          },
+        ]
+      : [],
+    error:
+      status === 'failed' || status === 'timedOut'
+        ? { message: 'boom', stack: 'Error: boom', snippet: 'expect(1).toBe(2)' }
+        : undefined,
+  } as unknown as TestResult;
+}
+
+describe('convertTestResult', () => {
+  const options = {
+    apiUrl: 'https://example.test/api',
+    apiKey: 'key',
+    projectId: 'proj',
+  };
+
+  it('does not attach file bodies on conversion', () => {
+    const converted = convertTestResult(makeTest(), makeResult('passed'), new Date(), options);
+    expect(converted.attachments).toBeUndefined();
+  });
+
+  it('omits steps for passing tests by default', () => {
+    const converted = convertTestResult(makeTest(), makeResult('passed'), new Date(), options);
+    expect(converted.steps).toBeUndefined();
+  });
+
+  it('includes steps for failed tests', () => {
+    const converted = convertTestResult(makeTest(), makeResult('failed'), new Date(), options);
+    expect(converted.steps).toHaveLength(1);
+    expect(converted.steps?.[0].title).toBe('goto');
+  });
+
+  it('includes steps for passing tests when includePassingTestSteps is true', () => {
+    const converted = convertTestResult(makeTest(), makeResult('passed'), new Date(), {
+      ...options,
+      includePassingTestSteps: true,
+    });
+    expect(converted.steps).toHaveLength(1);
   });
 });

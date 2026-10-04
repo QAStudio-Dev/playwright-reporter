@@ -111,7 +111,7 @@ export class QAStudioAPIClient {
       try {
         if (attempt > 0) {
           this.log(`Retry attempt ${attempt + 1}/${this.maxRetries}`);
-          await this.sleep(Math.min(1000 * Math.pow(2, attempt), 10000)); // Exponential backoff
+          await this.sleep(Math.min(1000 * Math.pow(2, attempt), 10000) + Math.random() * 250);
         }
 
         return await this.makeRequest<T>(url, options);
@@ -211,7 +211,7 @@ export class QAStudioAPIClient {
       try {
         if (attempt > 0) {
           this.log(`Retry attempt ${attempt + 1}/${this.maxRetries}`);
-          await this.sleep(Math.min(1000 * Math.pow(2, attempt), 10000));
+          await this.sleep(Math.min(1000 * Math.pow(2, attempt), 10000) + Math.random() * 250);
         }
 
         return await this.makeMultipartRequest<T>(url, fields);

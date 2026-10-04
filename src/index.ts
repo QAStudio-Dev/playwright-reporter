@@ -10,9 +10,10 @@ import { QAStudioAPIClient } from './api-client';
 import type {
   QAStudioReporterOptions,
   ReporterState,
-  QAStudioTestResult,
   UploadFailure,
   PendingUpload,
+  PendingResult,
+  UploadResult,
 } from './types';
 import {
   convertTestResult,
@@ -54,7 +55,9 @@ export default class QAStudioReporter implements Reporter {
     includeErrorSnippet: boolean;
     includeErrorLocation: boolean;
     includeTestSteps: boolean;
+    includePassingTestSteps: boolean;
     includeConsoleOutput: boolean;
+    batchSize: number;
     maxRetries: number;
     timeout: number;
     silent: boolean;
@@ -67,6 +70,11 @@ export default class QAStudioReporter implements Reporter {
   private failedTests = 0;
   private skippedTests = 0;
   private flushPromises: PendingUpload[] = [];
+  private resultBuffer: PendingResult[] = [];
+  private inFlightFlushes = 0;
+  private flushWaiters: Array<() => void> = [];
+  private readonly maxConcurrentFlushes = 4;
+  private readonly maxConcurrentAttachments = 4;
   private uploadFailures: UploadFailure[] = [];
   private testRunReadyPromise: Promise<void>;
   private testRunReadyResolve: (() => void) | null = null;
@@ -103,8 +111,10 @@ export default class QAStudioReporter implements Reporter {
       includeErrorSnippet: sanitizedOptions.includeErrorSnippet ?? true,
       includeErrorLocation: sanitizedOptions.includeErrorLocation ?? true,
       includeTestSteps: sanitizedOptions.includeTestSteps ?? true,
+      includePassingTestSteps: sanitizedOptions.includePassingTestSteps ?? false,
       filterFixtureSteps: sanitizedOptions.filterFixtureSteps ?? true,
       includeConsoleOutput: sanitizedOptions.includeConsoleOutput ?? false,
+      batchSize: sanitizedOptions.batchSize ?? 10,
       maxRetries: sanitizedOptions.maxRetries ?? 3,
       timeout: sanitizedOptions.timeout ?? 30000,
       silent: sanitizedOptions.silent ?? true,
@@ -215,14 +225,10 @@ export default class QAStudioReporter implements Reporter {
           break;
       }
 
-      // Wait for test run to be ready before sending results
+      // Convert result without reading attachments as base64
       this.log(`[onTestEnd] Preparing to send test #${this.totalTests}: ${test.title}`);
       const qaResult = convertTestResult(test, result, testData.startTime, this.options);
-
-      // Extract attachments separately for multipart upload
       const attachmentBuffers = extractAttachmentsAsBuffers(result);
-
-      // Filter attachments based on options
       const filteredAttachments = attachmentBuffers.filter((att) => {
         if (att.type === 'screenshot' && !this.options.uploadScreenshots) {
           return false;
@@ -233,49 +239,15 @@ export default class QAStudioReporter implements Reporter {
         return true;
       });
 
-      // Remove attachments from result (will upload separately)
       delete qaResult.attachments;
+      this.state.tests.delete(testId);
 
-      // Normalize test status for failure tracking
-      const testStatus = this.normalizeTestStatus(result.status);
-
-      // Send result immediately (fire-and-forget, don't block test execution)
-      // Wait for test run to be ready, then send result
-      // Convert to a promise that always fulfills (never rejects) to avoid unhandled rejections
-      const sendPromise = this.testRunReadyPromise
-        .then(() => {
-          if (!this.state.testRunId) {
-            // Provide detailed error with root cause if available
-            const errorMessage = this.getTestRunCreationErrorMessage();
-            if (errorMessage) {
-              throw new Error(errorMessage);
-            }
-            throw new Error('Test run was not created successfully');
-          }
-          return this.sendTestResult(qaResult, filteredAttachments);
-        })
-        .then(() => ({ success: true as const }))
-        .catch((error: unknown) => {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          // Log upload failure in verbose mode for debugging
-          if (this.options.verbose) {
-            this.log(`Upload failed for ${test.title}: ${errorMessage}`);
-          }
-          return {
-            success: false as const,
-            error: errorMessage,
-          };
-        });
-
-      // Track the promise with metadata so we can collect failures in onEnd
-      this.flushPromises.push({
-        promise: sendPromise,
+      this.enqueueResult({
+        result: qaResult,
+        attachments: filteredAttachments,
         testTitle: test.title,
-        status: testStatus,
+        status: this.normalizeTestStatus(result.status),
       });
-      this.log(
-        `[onTestEnd] Promise tracked for test #${this.totalTests}: ${test.title} (total tracked: ${this.flushPromises.length})`
-      );
     } else {
       this.log(`[onTestEnd] Skipping retry ${result.retry}/${test.retries} for: ${test.title}`);
     }
@@ -379,16 +351,14 @@ export default class QAStudioReporter implements Reporter {
    * Wait for all pending result submissions to complete and collect failures
    */
   private async sendTestResults(): Promise<void> {
-    // Wait for all pending submissions to complete (even if no test run ID)
-    // The promises themselves will fail appropriately if test run creation failed
+    this.flushResultBuffer();
+
     if (this.flushPromises.length > 0) {
       const totalPending = this.flushPromises.length;
       this.log(`Waiting for ${totalPending} pending result submissions...`);
 
-      // Wait for all promises (all will fulfill, none will reject)
       const results = await Promise.all(this.flushPromises.map((item) => item.promise));
 
-      // Collect failures from unsuccessful results
       results.forEach((result, index) => {
         if (!result.success) {
           const item = this.flushPromises[index];
@@ -399,7 +369,6 @@ export default class QAStudioReporter implements Reporter {
             status: item.status,
           });
 
-          // Log in verbose mode
           if (this.options.verbose) {
             this.log(`Failed to upload result for ${item.testTitle}:`, result.error);
           }
@@ -416,43 +385,145 @@ export default class QAStudioReporter implements Reporter {
   }
 
   /**
-   * Send a single test result to the API
+   * Buffer a converted result and flush when the batch is full
    */
-  private async sendTestResult(
-    result: QAStudioTestResult,
-    attachments: Array<{
-      name: string;
-      contentType: string;
-      data: Buffer;
-      type: 'screenshot' | 'video' | 'trace' | 'other';
-    }>
-  ): Promise<void> {
-    if (!this.state.testRunId) {
-      return;
+  private enqueueResult(item: PendingResult): void {
+    this.resultBuffer.push(item);
+    this.log(
+      `[onTestEnd] Buffered ${item.testTitle} (${this.resultBuffer.length}/${this.options.batchSize})`
+    );
+
+    if (this.resultBuffer.length >= this.options.batchSize) {
+      this.flushResultBuffer();
     }
+  }
 
-    this.log(`Sending result: ${result.title}`);
+  /**
+   * Flush the current result buffer as one or more API batches
+   */
+  private flushResultBuffer(): void {
+    while (this.resultBuffer.length > 0) {
+      const batch = this.resultBuffer.splice(0, this.options.batchSize);
+      this.startBatchUpload(batch);
+    }
+  }
 
-    // Send single result to API
-    const response = await this.apiClient.submitTestResults({
-      testRunId: this.state.testRunId,
-      results: [result],
+  /**
+   * Upload a batch without blocking the Playwright worker
+   */
+  private startBatchUpload(batch: PendingResult[]): void {
+    const batchPromise: Promise<UploadResult[]> = this.testRunReadyPromise.then(async () => {
+      await this.acquireFlushSlot();
+      try {
+        if (!this.state.testRunId) {
+          const errorMessage =
+            this.getTestRunCreationErrorMessage() || 'Test run was not created successfully';
+          throw new Error(errorMessage);
+        }
+        return await this.sendResultBatch(batch);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (this.options.verbose) {
+          this.log(`Batch upload failed: ${errorMessage}`);
+        }
+        return batch.map(() => ({ success: false as const, error: errorMessage }));
+      } finally {
+        this.releaseFlushSlot();
+      }
     });
 
-    this.log(`Result submitted: ${result.title} (${response.processedCount} processed)`);
+    batch.forEach((item, index) => {
+      this.flushPromises.push({
+        promise: batchPromise.then((results) => results[index]),
+        testTitle: item.testTitle,
+        status: item.status,
+      });
+    });
 
-    // Check for errors
+    this.log(
+      `Queued batch of ${batch.length} result(s) (total tracked: ${this.flushPromises.length})`
+    );
+  }
+
+  private async acquireFlushSlot(): Promise<void> {
+    while (this.inFlightFlushes >= this.maxConcurrentFlushes) {
+      await new Promise<void>((resolve) => this.flushWaiters.push(resolve));
+    }
+    this.inFlightFlushes++;
+  }
+
+  private releaseFlushSlot(): void {
+    this.inFlightFlushes--;
+    const next = this.flushWaiters.shift();
+    next?.();
+  }
+
+  /**
+   * Send a batch of test results and upload their attachments
+   */
+  private async sendResultBatch(batch: PendingResult[]): Promise<UploadResult[]> {
+    if (!this.state.testRunId) {
+      return batch.map(() => ({
+        success: false as const,
+        error: 'Test run was not created successfully',
+      }));
+    }
+
+    this.log(`Sending batch of ${batch.length} result(s)`);
+
+    const response = await this.apiClient.submitTestResults({
+      testRunId: this.state.testRunId,
+      results: batch.map((item) => item.result),
+    });
+
+    this.log(`Batch submitted (${response.processedCount} processed)`);
+
+    const failedTitles = new Set((response.errors ?? []).map((err) => err.testTitle));
     if (response.errors && response.errors.length > 0) {
       response.errors.forEach((err) => {
         this.log(`  Error: ${err.error}`);
       });
     }
 
-    // Upload attachments if we have result IDs
-    if (response.results && response.results.length > 0 && attachments.length > 0) {
-      const testResultId = response.results[0].testResultId;
-      await this.uploadAttachments(testResultId, attachments);
+    const outcomes: UploadResult[] = batch.map((item) => {
+      if (failedTitles.has(item.testTitle)) {
+        const match = response.errors?.find((err) => err.testTitle === item.testTitle);
+        return { success: false as const, error: match?.error || 'Result rejected by API' };
+      }
+      return { success: true as const };
+    });
+
+    const usedResultIndexes = new Set<number>();
+    const attachmentJobs: Array<{
+      testResultId: string;
+      attachments: PendingResult['attachments'];
+    }> = [];
+
+    for (const item of batch) {
+      if (failedTitles.has(item.testTitle) || item.attachments.length === 0) {
+        continue;
+      }
+
+      const matchIndex = response.results?.findIndex(
+        (result, index) => !usedResultIndexes.has(index) && result.title === item.result.title
+      );
+
+      if (matchIndex === undefined || matchIndex < 0 || !response.results) {
+        continue;
+      }
+
+      usedResultIndexes.add(matchIndex);
+      attachmentJobs.push({
+        testResultId: response.results[matchIndex].testResultId,
+        attachments: item.attachments,
+      });
     }
+
+    await Promise.all(
+      attachmentJobs.map((job) => this.uploadAttachments(job.testResultId, job.attachments))
+    );
+
+    return outcomes;
   }
 
   /**
@@ -473,26 +544,28 @@ export default class QAStudioReporter implements Reporter {
 
     this.log(`Uploading ${attachments.length} attachments for result ${testResultId}`);
 
-    // Upload attachments in parallel
-    const uploadPromises = attachments.map((attachment) =>
-      this.apiClient
-        .uploadAttachment(
-          testResultId,
-          attachment.name,
-          attachment.contentType,
-          attachment.data,
-          attachment.type
+    for (let i = 0; i < attachments.length; i += this.maxConcurrentAttachments) {
+      const slice = attachments.slice(i, i + this.maxConcurrentAttachments);
+      await Promise.allSettled(
+        slice.map((attachment) =>
+          this.apiClient
+            .uploadAttachment(
+              testResultId,
+              attachment.name,
+              attachment.contentType,
+              attachment.data,
+              attachment.type
+            )
+            .then(() => {
+              this.log(`Uploaded: ${attachment.name} (${attachment.data.length} bytes)`);
+            })
+            .catch((error) => {
+              this.log(`Failed to upload ${attachment.name}:`, error);
+            })
         )
-        .then(() => {
-          this.log(`Uploaded: ${attachment.name} (${attachment.data.length} bytes)`);
-        })
-        .catch((error) => {
-          this.log(`Failed to upload ${attachment.name}:`, error);
-          // Don't throw - continue with other attachments
-        })
-    );
+      );
+    }
 
-    await Promise.allSettled(uploadPromises);
     this.log(`Finished uploading ${attachments.length} attachments`);
   }
 
