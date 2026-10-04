@@ -22,20 +22,22 @@ export function convertTestResult(
   const includeErrorSnippet = options?.includeErrorSnippet !== false; // default true
   const includeErrorLocation = options?.includeErrorLocation !== false; // default true
   const includeTestSteps = options?.includeTestSteps !== false; // default true
+  const includePassingTestSteps = options?.includePassingTestSteps === true; // default false
   const includeConsoleOutput = options?.includeConsoleOutput === true; // default false
+  const status = mapTestStatus(result.status);
+  const isFailure = status === 'failed' || status === 'timedout';
 
   const testResult: QAStudioTestResult = {
     testCaseId: extractTestCaseId(test),
     title: test.title,
     fullTitle: getFullTitle(test),
-    status: mapTestStatus(result.status),
+    status,
     duration: result.duration,
     error: result.error?.message,
     stackTrace: result.error?.stack,
     startTime: startTime.toISOString(),
     endTime: endTime.toISOString(),
     retry: result.retry,
-    attachments: extractAttachments(result),
     projectName: test.parent?.project()?.name,
     metadata: extractMetadata(test),
   };
@@ -54,8 +56,8 @@ export function convertTestResult(
     };
   }
 
-  // Add test steps if enabled
-  if (includeTestSteps && result.steps && result.steps.length > 0) {
+  // Add test steps for failures, or for all tests when includePassingTestSteps is on
+  if (includeTestSteps && (isFailure || includePassingTestSteps) && result.steps?.length) {
     const filterFixtures = options?.filterFixtureSteps !== false; // default true
     testResult.steps = result.steps
       .map((step) => convertTestStep(step, filterFixtures))

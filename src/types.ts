@@ -60,7 +60,7 @@ export interface QAStudioReporterOptions {
 
   /**
    * Batch size for sending test results
-   * @default 50
+   * @default 10
    */
   batchSize?: number;
 
@@ -93,6 +93,12 @@ export interface QAStudioReporterOptions {
    * @default true
    */
   includeTestSteps?: boolean;
+
+  /**
+   * Also include test execution steps for passing tests
+   * @default false
+   */
+  includePassingTestSteps?: boolean;
 
   /**
    * Filter out Playwright internal fixture setup/teardown steps
@@ -405,6 +411,21 @@ export type UploadResult = { success: true } | { success: false; error: string }
 export interface UploadFailure {
   testTitle: string;
   error: string;
+  status: 'passed' | 'failed' | 'skipped';
+}
+
+/**
+ * Pending test result upload with metadata
+ */
+export interface PendingResult {
+  result: QAStudioTestResult;
+  attachments: Array<{
+    name: string;
+    contentType: string;
+    data: Buffer;
+    type: 'screenshot' | 'video' | 'trace' | 'other';
+  }>;
+  testTitle: string;
   status: 'passed' | 'failed' | 'skipped';
 }
 

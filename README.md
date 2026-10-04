@@ -79,28 +79,29 @@ Test results will be automatically sent to QAStudio.dev!
 
 ## Configuration Options
 
-| Option                 | Type    | Required | Default        | Description                                         |
-| ---------------------- | ------- | -------- | -------------- | --------------------------------------------------- |
-| `apiUrl`               | string  | ✅       | -              | QAStudio.dev API base URL                           |
-| `apiKey`               | string  | ✅       | -              | API key for authentication                          |
-| `projectId`            | string  | ✅       | -              | QAStudio.dev project ID                             |
-| `testRunId`            | string  | ❌       | -              | Existing test run ID (auto-created if not provided) |
-| `environment`          | string  | ❌       | `'default'`    | Environment name (e.g., 'CI', 'staging')            |
-| `createTestRun`        | boolean | ❌       | `true`         | Auto-create test run if testRunId not provided      |
-| `testRunName`          | string  | ❌       | Auto-generated | Name for new test runs                              |
-| `testRunDescription`   | string  | ❌       | -              | Description for new test runs                       |
-| `milestoneId`          | string  | ❌       | -              | Associate test run with milestone                   |
-| `verbose`              | boolean | ❌       | `false`        | Enable detailed logging                             |
-| `batchSize`            | number  | ❌       | `10`           | Batch size for sending results                      |
-| `uploadScreenshots`    | boolean | ❌       | `true`         | Upload screenshots for failed tests                 |
-| `uploadVideos`         | boolean | ❌       | `true`         | Upload videos for failed tests                      |
-| `includeErrorSnippet`  | boolean | ❌       | `true`         | Include code snippet showing where error occurred   |
-| `includeErrorLocation` | boolean | ❌       | `true`         | Include precise error location (file, line, column) |
-| `includeTestSteps`     | boolean | ❌       | `true`         | Include test execution steps for failed tests       |
-| `includeConsoleOutput` | boolean | ❌       | `false`        | Include console output (stdout/stderr)              |
-| `maxRetries`           | number  | ❌       | `3`            | Max retry attempts for API requests                 |
-| `timeout`              | number  | ❌       | `30000`        | API request timeout (ms)                            |
-| `silent`               | boolean | ❌       | `true`         | Don't fail tests if API is unavailable              |
+| Option                    | Type    | Required | Default        | Description                                         |
+| ------------------------- | ------- | -------- | -------------- | --------------------------------------------------- |
+| `apiUrl`                  | string  | ✅       | -              | QAStudio.dev API base URL                           |
+| `apiKey`                  | string  | ✅       | -              | API key for authentication                          |
+| `projectId`               | string  | ✅       | -              | QAStudio.dev project ID                             |
+| `testRunId`               | string  | ❌       | -              | Existing test run ID (auto-created if not provided) |
+| `environment`             | string  | ❌       | `'default'`    | Environment name (e.g., 'CI', 'staging')            |
+| `createTestRun`           | boolean | ❌       | `true`         | Auto-create test run if testRunId not provided      |
+| `testRunName`             | string  | ❌       | Auto-generated | Name for new test runs                              |
+| `testRunDescription`      | string  | ❌       | -              | Description for new test runs                       |
+| `milestoneId`             | string  | ❌       | -              | Associate test run with milestone                   |
+| `verbose`                 | boolean | ❌       | `false`        | Enable detailed logging                             |
+| `batchSize`               | number  | ❌       | `10`           | Batch size for sending results                      |
+| `uploadScreenshots`       | boolean | ❌       | `true`         | Upload screenshots for failed tests                 |
+| `uploadVideos`            | boolean | ❌       | `true`         | Upload videos for failed tests                      |
+| `includeErrorSnippet`     | boolean | ❌       | `true`         | Include code snippet showing where error occurred   |
+| `includeErrorLocation`    | boolean | ❌       | `true`         | Include precise error location (file, line, column) |
+| `includeTestSteps`        | boolean | ❌       | `true`         | Include test execution steps for failed tests       |
+| `includePassingTestSteps` | boolean | ❌       | `false`        | Also include steps for passing tests                |
+| `includeConsoleOutput`    | boolean | ❌       | `false`        | Include console output (stdout/stderr)              |
+| `maxRetries`              | number  | ❌       | `3`            | Max retry attempts for API requests                 |
+| `timeout`                 | number  | ❌       | `30000`        | API request timeout (ms)                            |
+| `silent`                  | boolean | ❌       | `true`         | Don't fail tests if API is unavailable              |
 
 ## Linking Tests to QAStudio.dev Test Cases
 
