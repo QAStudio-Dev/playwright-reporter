@@ -118,7 +118,7 @@ When adding new features:
    - Any breaking changes
    - How to test the changes
 
-4. Wait for review and address any feedback
+4. Wait for review and address any feedback. PRs are also reviewed by CodeRabbit using [`.coderabbit.yaml`](.coderabbit.yaml). Draft PRs and titles containing `WIP` or `DO NOT MERGE` are skipped. Use `@coderabbitai summary` in the PR description to fill in the high-level summary placeholder.
 
 ## Feature Requests
 

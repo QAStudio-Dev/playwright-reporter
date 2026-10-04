@@ -1,0 +1,108 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit Configuration
+# https://docs.coderabbit.ai/reference/configuration
+
+language: en-US
+tone_instructions: 'Be concise and constructive. Expert in TypeScript, Playwright reporters, and Node.js http/https. Focus on silent-mode reliability, accurate upload counts, and not breaking host test runs.'
+early_access: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_placeholder: '@coderabbitai summary'
+  poem: true
+  review_status: true
+  review_details: false
+  review_progress: true
+  commit_status: true
+  collapse_walkthrough: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches:
+      - main
+    ignore_title_keywords:
+      - WIP
+      - '[WIP]'
+      - DO NOT MERGE
+
+  path_instructions:
+    - path: 'src/index.ts'
+      instructions: |
+        Playwright reporter review:
+        - Implements Playwright `Reporter`: onBegin → onTestBegin → onTestEnd → onEnd
+        - `silent` defaults to true; API failures must not throw into the test run
+        - Report only the final retry of a test
+        - `testRunReadyPromise` must resolve/reject in a finally path so uploads are not deadlocked
+        - Upload promises in onTestEnd are fire-and-forget but tracked in `flushPromises` and awaited in onEnd
+        - Counts must stay consistent: subtract upload failures by status so total = passed + failed + skipped
+        - Do not log API keys or full auth headers
+        - Prefix user-facing errors with `[QAStudio.dev Reporter]`
+
+    - path: 'src/api-client.ts'
+      instructions: |
+        HTTP client review:
+        - Use Node `http`/`https` only (no extra HTTP libraries)
+        - Auth header is `Authorization: Bearer <apiKey>` against QA Studio public API
+        - Retry with exponential backoff; honor maxRetries and timeout options
+        - Keep User-Agent `@qastudio-dev/playwright/...`
+        - Sanitize URLs/strings before logging
+        - Attachment uploads are multipart/form-data to `/attachments`
+
+    - path: 'src/utils.ts'
+      instructions: |
+        Mapping helpers:
+        - Preserve test case ID extraction from annotations (`testCaseId`) and `[QA-123]` title prefixes
+        - Respect includeErrorSnippet / includeErrorLocation / includeTestSteps / includeConsoleOutput flags
+        - Filter screenshots/videos from `uploadScreenshots` / `uploadVideos`
+        - validateOptions must reject missing apiUrl, apiKey, and projectId
+
+    - path: 'src/types.ts'
+      instructions: |
+        Keep exported option types accurate. Discriminated unions for UploadResult/UploadFailure/PendingUpload must stay exhaustive.
+
+    - path: 'src/**/*.test.ts'
+      instructions: |
+        Vitest tests currently live next to source (for example src/utils.test.ts). Cover retries, option validation, and mapping edge cases. Do not require a live QA Studio instance.
+
+  path_filters:
+    - '!**/*.lock'
+    - '!**/package-lock.json'
+    - '!dist/**'
+    - '!coverage/**'
+    - '!examples/**'
+
+  tools:
+    eslint:
+      enabled: false
+    biome:
+      enabled: false
+    github-checks:
+      enabled: true
+    gitleaks:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: auto
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - 'CLAUDE.md'
+      - 'CONTRIBUTING.md'
+      - 'README.md'
+  automatic_linking_mode: auto
+  linked_repositories:
+    - repository: QAStudio-Dev/studio
+      instructions: 'QA Studio public API for /runs, /results, /attachments, and run completion.'
+    - repository: QAStudio-Dev/playwright-reporter-python
+      instructions: 'Sister pytest plugin; keep API payload shapes compatible where possible.'
+    - repository: QAStudio-Dev/mcp-server
+      instructions: 'MCP client of the same public API.'
