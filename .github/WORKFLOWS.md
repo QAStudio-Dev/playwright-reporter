@@ -47,7 +47,7 @@ This repository uses GitHub Actions for automated testing, releases, and npm pub
    - Enable **Allow npm publish** (required — the workflow runs `npm publish`, not `npm stage publish`)
    - Leave Environment name empty unless this workflow uses a GitHub Environment
 
-2. **Do not set `NPM_TOKEN` / `NODE_AUTH_TOKEN` on the publish step.** A stored token overrides OIDC and is what produced `E404` on expired granular tokens.
+2. **Do not set `NPM_TOKEN` / `NODE_AUTH_TOKEN`, and do not pass `registry-url` to `actions/setup-node@v4`.** That action exports a dummy `NODE_AUTH_TOKEN` (`XXXXX-XXXXX-XXXXX-XXXXX`) which overrides OIDC and produces `E404`.
 
 **Usage:**
 This workflow runs automatically when you publish a release, or via workflow_dispatch with tag `v1.5.0` (a leading `v` is optional).

@@ -40,7 +40,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          # Do not set registry-url. setup-node@v4 then writes an .npmrc
+          # with _authToken and exports a dummy NODE_AUTH_TOKEN, which
+          # makes npm skip OIDC trusted publishing.
           package-manager-cache: false
 
       - name: Ensure npm supports trusted publishing
@@ -55,11 +57,10 @@ jobs:
       - name: Build package
         run: npm run build
 
-      # Do not set NODE_AUTH_TOKEN. npm 11.5.1+ exchanges the GitHub OIDC
-      # token for a short-lived publish credential. A stored NPM_TOKEN
-      # would skip trusted publishing and fail with a 404 on expired tokens.
       - name: Publish to npm
-        run: npm publish --access public
+        run: |
+          unset NODE_AUTH_TOKEN NPM_CONFIG_USERCONFIG
+          npm publish --access public
 
       - name: Create publish summary
         run: |
