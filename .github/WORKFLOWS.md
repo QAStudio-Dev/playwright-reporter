@@ -38,20 +38,19 @@ This repository uses GitHub Actions for automated testing, releases, and npm pub
 
 **Setup Required:**
 
-1. **Create npm Access Token:**
-   - Go to https://www.npmjs.com/settings/YOUR_USERNAME/tokens
-   - Click "Generate New Token" → "Automation"
-   - Copy the token
+1. **Add a Trusted Publisher on npmjs.com** (one-time, no rotating token):
+   - Open https://www.npmjs.com/package/@qastudio-dev/playwright → Settings → Trusted Publisher
+   - Publisher: GitHub Actions
+   - Organization: `QAStudio-Dev`
+   - Repository: `playwright-reporter`
+   - Workflow filename: `publish.yml`
+   - Enable **Allow npm publish** (required — the workflow runs `npm publish`, not `npm stage publish`)
+   - Leave Environment name empty unless this workflow uses a GitHub Environment
 
-2. **Add to GitHub Secrets:**
-   - Go to your repository → Settings → Secrets and variables → Actions
-   - Click "New repository secret"
-   - Name: `NPM_TOKEN`
-   - Value: Your npm token
-   - Click "Add secret"
+2. **Do not set `NPM_TOKEN` / `NODE_AUTH_TOKEN` on the publish step.** A stored token overrides OIDC and is what produced `E404` on expired granular tokens.
 
 **Usage:**
-This workflow runs automatically when you publish a release (see Release workflow below).
+This workflow runs automatically when you publish a release, or via workflow_dispatch with tag `v1.5.0` (a leading `v` is optional).
 
 ---
 
@@ -156,11 +155,12 @@ If you prefer to create releases manually:
 
 ## Troubleshooting
 
-### Publish workflow fails with "401 Unauthorized"
+### Publish workflow fails with "401 Unauthorized" or "404 Not Found"
 
-- Check that `NPM_TOKEN` is set correctly in GitHub Secrets
-- Verify the token has "Automation" permissions
-- Ensure you're logged into the correct npm account
+- Confirm the Trusted Publisher on npmjs.com matches this repo and `publish.yml` exactly
+- Confirm **Allow npm publish** is enabled on that trusted publisher
+- Confirm the workflow does not set `NODE_AUTH_TOKEN` (an expired token looks like `E404`)
+- Confirm the job uses Node 22.14+ / npm 11.5.1+ on a GitHub-hosted runner
 
 ### Release workflow fails with "Permission denied"
 
@@ -178,8 +178,8 @@ If you prefer to create releases manually:
 
 ## Security Notes
 
-- `NPM_TOKEN` is a sensitive secret - never commit it to the repository
-- The publish workflow uses npm provenance for supply chain security
+- Publishing uses npm Trusted Publishing (OIDC). Do not store a write-capable `NPM_TOKEN`
+- Provenance attestations are generated automatically when publishing via OIDC
 - Workflows use pinned actions (e.g., `@v4`) for security
 - `GITHUB_TOKEN` has limited permissions scoped to the workflow
 

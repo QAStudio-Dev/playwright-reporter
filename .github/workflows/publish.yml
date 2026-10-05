@@ -15,18 +15,36 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # Required for npm provenance
+      id-token: write # Required for npm trusted publishing (OIDC)
     steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          RAW="${{ inputs.tag || github.event.release.tag_name }}"
+          if [[ -z "$RAW" ]]; then
+            echo "No tag provided" >&2
+            exit 1
+          fi
+          if [[ "$RAW" == v* ]]; then
+            echo "ref=$RAW" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=v$RAW" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          ref: ${{ steps.tag.outputs.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm ci
@@ -37,15 +55,16 @@ jobs:
       - name: Build package
         run: npm run build
 
+      # Do not set NODE_AUTH_TOKEN. npm 11.5.1+ exchanges the GitHub OIDC
+      # token for a short-lived publish credential. A stored NPM_TOKEN
+      # would skip trusted publishing and fail with a 404 on expired tokens.
       - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
 
       - name: Create publish summary
         run: |
           echo "## 📦 Published to npm" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Package:** @qastudio-dev/playwright" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** ${{ github.event.release.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.tag.outputs.ref }}" >> $GITHUB_STEP_SUMMARY
           echo "**Release:** ${{ github.event.release.html_url }}" >> $GITHUB_STEP_SUMMARY
